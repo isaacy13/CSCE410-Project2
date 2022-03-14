@@ -1,19 +1,24 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <wait.h>
 #include <time.h>
 #include <string.h>
 #include <stdbool.h>
+#include <errno.h>
 
 #ifndef IN_FNAME
 #define IN_FNAME "yeangi_proj2_input"
 #endif
 
 #ifndef OUT_FNAME
-#define OUT_FNAME "yeangi_proj2_output"
+#define OUT_FNAME "yeangi_proj2_output_"
 #endif
 
 #ifndef NUM_REFERENCES
-#define NUM_REFERENCES 8
+#define NUM_REFERENCES 100
 #endif
 
 typedef struct Page {
@@ -33,8 +38,20 @@ bool SecondChance(Page result[][NUM_REFERENCES], Page current[], int page, int n
 
 void HandleSimulation(int reference_string[], int alg_type, int num_frames, bool p_stdout);
 void PrintCurrentPT(Page result[][NUM_REFERENCES], int num_frames, bool faults[], size_t num_faults, int reference_string[NUM_REFERENCES]);
+void WriteResultPT(Page result[][NUM_REFERENCES], int num_frames, bool faults[], size_t num_faults, int reference_string[NUM_REFERENCES], int alg_type);
 
 int main() {
+    // remove any previous files
+    int child = fork();
+    if (!child) {
+        // child
+        system("rm -f *.txt");
+        exit(0);
+    } else {
+        int status;
+        waitpid(child, &status, 0);
+    }
+
     // prompt asking 4 vs 8 pg frame, pick between 3 algorithm types
     size_t frame_selection = -1, algorithm_selection = -1;
     SelectionPrompt(&frame_selection, &algorithm_selection);
@@ -103,6 +120,64 @@ void HandleSimulation(int reference_string[NUM_REFERENCES], int alg_type, int nu
         PrintCurrentPT(result, num_frames, faults, num_faults, reference_string);
     }
     // write results for 4/8 pg frame in respective file (use chmod)
+    WriteResultPT(result, num_frames, faults, num_faults, reference_string, alg_type);
+}
+
+void WriteResultPT(Page result[][NUM_REFERENCES], int num_frames, bool faults[], size_t num_faults, int reference_string[NUM_REFERENCES], int alg_type) {
+    // create filename with proper extension
+    char* frames_ext = malloc(sizeof(char) * (strlen("4frames.txt") + 1));
+    strcpy(frames_ext, "4frames.txt");
+    if (num_frames == 8)
+        frames_ext[0] = '8';
+    
+    size_t len = strlen(OUT_FNAME) + strlen(frames_ext) + 1;
+    char* fname = malloc(sizeof(char) * len);
+    strcpy(fname, OUT_FNAME);
+    strcat(fname, frames_ext);
+
+    // create file descriptor
+    FILE* f;
+    int fd;
+    // if exists, append mode
+    if (f = fopen(fname, "r")) {
+        fd = open(fname, O_APPEND | O_WRONLY);
+    }
+    
+    // otherwise, create mode
+    else {
+        fd = open(fname, O_CREAT | O_WRONLY);
+        f = fopen(fname, "r");
+
+        chmod(fname, 0777);
+    }
+
+    // create STDOUT fd backup
+    int backup = dup(1);
+
+    // redirect STDOUT fd to FILE fd
+    int x = dup2(fd, 1);
+
+    // write to STDOUT (which is pointing to file)
+    if (alg_type == 1)
+        printf("================\n======FIFO======\n================\n");
+
+    else if (alg_type == 2)
+        printf("===============\n======LRU======\n===============\n");
+    else
+        printf("==============\n======SC======\n==============\n");
+    PrintCurrentPT(result, num_frames, faults, num_faults, reference_string);
+
+    // repoint STDOUT fd to backup
+    int y = dup2(backup, 1);
+    
+    // free allocated memory
+    free(fname);
+    free(frames_ext);
+
+    // close appropriate fds
+    fclose(f);
+    close(fd);
+    close(backup);
 }
 
 bool FIFO(Page result[][NUM_REFERENCES], Page current[], int page, int num_frames, size_t current_reference, time_t timestamp) {
@@ -305,6 +380,8 @@ void SelectionPrompt(size_t* frame_selection, size_t* algorithm_selection) {
         printf("%s", algorithm_prompt);
         scanf("%ld", algorithm_selection);
     } while(*algorithm_selection < 1 && *algorithm_selection > 3);
+
+    printf("\n");
 }
 
 void GenerateRefString() {
